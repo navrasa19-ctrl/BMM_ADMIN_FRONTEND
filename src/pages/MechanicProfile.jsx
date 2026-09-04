@@ -426,30 +426,80 @@ const AdminMechanicProfile = () => {
   };
 
   const getMechanicAvailability = (mechanic) => {
-    const { activeBookings, available } = getMechanicBookingContext(mechanic, bookingTimeSlotFilter);
+    const approvalStatus = (mechanic?.status || "").toLowerCase();
 
-    if (activeBookings.length === 0) {
+    if (approvalStatus === "rejected") {
       return {
-        label: "Available",
-        tone: "bg-emerald-50 text-emerald-700 border-emerald-200",
-        available: true,
-        icon: <CheckCircle2 size={14} />,
+        key: "rejected",
+        label: "Rejected",
+        tone: "bg-red-50 text-red-700 border-red-200",
+        available: false,
+        icon: <X size={14} />,
       };
     }
 
-    return available
-      ? {
-          label: "Available",
-          tone: "bg-emerald-50 text-emerald-700 border-emerald-200",
-          available: true,
-          icon: <CheckCircle2 size={14} />,
-        }
-      : {
-          label: "Busy",
-          tone: "bg-amber-50 text-amber-700 border-amber-200",
-          available: false,
-          icon: <Clock3 size={14} />,
-        };
+    if (approvalStatus === "suspended") {
+      return {
+        key: "suspended",
+        label: "Suspended",
+        tone: "bg-orange-50 text-orange-700 border-orange-200",
+        available: false,
+        icon: <ShieldCheck size={14} />,
+      };
+    }
+
+    if (approvalStatus && approvalStatus !== "approved") {
+      const pendingLabel = approvalStatus.charAt(0).toUpperCase() + approvalStatus.slice(1);
+      return {
+        key: "pending",
+        label: pendingLabel,
+        tone: "bg-amber-50 text-amber-700 border-amber-200",
+        available: false,
+        icon: <Clock3 size={14} />,
+      };
+    }
+
+    const live = (mechanic?.liveStatus || "offline").toLowerCase();
+
+    if (live === "offline") {
+      return {
+        key: "offline",
+        label: "Offline",
+        tone: "bg-slate-100 text-slate-600 border-slate-200",
+        available: false,
+        icon: <WifiOff size={14} />,
+      };
+    }
+
+    if (live === "engaged") {
+      return {
+        key: "busy",
+        label: "Busy",
+        tone: "bg-amber-50 text-amber-700 border-amber-200",
+        available: false,
+        icon: <Clock3 size={14} />,
+      };
+    }
+
+    const { activeBookings } = getMechanicBookingContext(mechanic, bookingTimeSlotFilter);
+
+    if (activeBookings.length > 0) {
+      return {
+        key: "busy",
+        label: "Busy",
+        tone: "bg-amber-50 text-amber-700 border-amber-200",
+        available: false,
+        icon: <Clock3 size={14} />,
+      };
+    }
+
+    return {
+      key: "available",
+      label: "Available",
+      tone: "bg-emerald-50 text-emerald-700 border-emerald-200",
+      available: true,
+      icon: <CheckCircle2 size={14} />,
+    };
   };
 
   const isDateFilterActive = Boolean(bookingDateFrom || bookingDateTo);
@@ -470,7 +520,9 @@ const AdminMechanicProfile = () => {
 
     const matchesStatus = statusFilter === 'all' || (m.status && m.status.toLowerCase() === statusFilter.toLowerCase());
     const matchesLiveStatus = liveStatusFilter === 'all' || (m.liveStatus || 'offline').toLowerCase() === liveStatusFilter.toLowerCase();
-    const matchesAvailability = effectiveAvailabilityFilter === 'all' || (effectiveAvailabilityFilter === 'available' ? availability.available : !availability.available);
+    const matchesAvailability =
+      effectiveAvailabilityFilter === "all" ||
+      availability.key === effectiveAvailabilityFilter;
     const matchesTimeSlot = bookingTimeSlotFilter === 'all' || activeBookings.length > 0;
 
     return matchesSearch && matchesStatus && matchesLiveStatus && matchesAvailability && matchesTimeSlot;
@@ -598,6 +650,9 @@ const AdminMechanicProfile = () => {
                 <option value="all">All Availability</option>
                 <option value="available">Available</option>
                 <option value="busy">Busy</option>
+                <option value="offline">Offline</option>
+                <option value="rejected">Rejected</option>
+                <option value="suspended">Suspended</option>
               </select>
 
               <select
@@ -739,7 +794,7 @@ const AdminMechanicProfile = () => {
                                 )}
                               </div>
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-700">{m.status}</td>
+                            <td className="px-4 py-3 text-sm text-gray-700 capitalize">{m.status || "pending"}</td>
                             <td className="px-4 py-3 text-sm text-gray-700">
                               <div className="space-y-2">
                                 <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold border ${availability.tone}`}>
@@ -806,14 +861,22 @@ const AdminMechanicProfile = () => {
                       <h2 className="text-xl font-bold text-slate-800">{selectedMechanic.name}</h2>
                       <p className="text-sm text-slate-500 mt-1">Mechanic ID: {selectedMechanic.mechanicId || selectedMechanic.kyc?.mechanicId || selectedMechanic.id || 'N/A'}</p>
                       <div className="flex flex-wrap gap-2 items-center mt-2">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${selectedMechanic.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                          {selectedMechanic.status}
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                          selectedMechanic.status === 'approved'
+                            ? 'bg-green-100 text-green-700'
+                            : selectedMechanic.status === 'rejected'
+                              ? 'bg-red-100 text-red-700'
+                              : selectedMechanic.status === 'suspended'
+                                ? 'bg-orange-100 text-orange-700'
+                                : 'bg-amber-100 text-amber-700'
+                        }`}>
+                          {selectedMechanic.status || "pending"}
                         </span>
                         <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${getLiveStatusMeta(selectedMechanic).tone}`}>
                           {getLiveStatusMeta(selectedMechanic).icon}
                           {getLiveStatusMeta(selectedMechanic).label}
                         </span>
-                        <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${getMechanicAvailability(selectedMechanic).available ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
+                        <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${getMechanicAvailability(selectedMechanic).tone}`}>
                           {getMechanicAvailability(selectedMechanic).icon}
                           {getMechanicAvailability(selectedMechanic).label}
                         </span>
