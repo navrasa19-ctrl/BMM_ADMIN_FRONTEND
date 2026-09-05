@@ -17,6 +17,8 @@ import JobPart from "./pages/JobPart";
 import ServiceTickets from "./pages/ServiceTickets";
 import AdminAssignMechanic from "./pages/AdminAssignMechanic";
 import Dashboard from "./pages/Dashboard";
+import MechanicStatus from "./pages/MechanicStatusTracking";
+import CustomerVehicles from "./pages/CustomerVehicles";
 
 function App() {
   return (
@@ -25,6 +27,7 @@ function App() {
         <Route path="/" element={<LoginForm />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/mechanicaservices" element={<MechanicServices />} />
+        <Route path="/mechanic-status" element={<MechanicStatus />} />
         <Route path="/add-banner" element={<AddBanner/>} />
         <Route path="/visible-issues" element={<EmergencyIssue/>} />
         <Route path="/service" element={<Service/>} />
@@ -39,6 +42,7 @@ function App() {
         <Route path="/customer-booking" element={<CustomerBooking/>} />
         <Route path="/service-tickets" element={<ServiceTickets/>} />
         <Route path="/admin-assign-mechanic" element={<AdminAssignMechanic/>} />
+        <Route path="/customer-vehicles" element={<CustomerVehicles/>} />
       </Routes>
     </Router>
   );

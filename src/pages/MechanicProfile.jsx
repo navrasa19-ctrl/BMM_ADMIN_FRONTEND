@@ -28,6 +28,17 @@ const BOOKING_TIME_SLOT_OPTIONS = [
   { value: "4-6", label: "04:00 PM to 06:00 PM" },
 ];
 
+const ACTIVE_BOOKING_STATUSES = new Set([
+  "searching",
+  "assigned",
+  "arrived",
+  "inspection_started",
+  "waiting_for_approval",
+  "job_sheet_rejected",
+  "approved",
+  "work_in_progress",
+]);
+
 const AdminMechanicProfile = () => {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 1024);
@@ -134,8 +145,8 @@ const AdminMechanicProfile = () => {
     }
   };
 
-  const getLiveStatusMeta = (mechanic) => {
-    const status = (mechanic?.liveStatus || "offline").toLowerCase();
+  const getLiveStatusMeta = (mechanic, activeBookings = []) => {
+    const status = resolveEffectiveLiveStatus(mechanic, activeBookings);
     const map = {
       online: {
         label: "Online",
@@ -267,6 +278,52 @@ const AdminMechanicProfile = () => {
 
   const normalizeValue = (value) => String(value ?? "").toLowerCase().trim();
 
+  const isMechanicApproved = (mechanic) =>
+    normalizeValue(mechanic?.status) === "approved";
+
+  const bookingBelongsToMechanic = (booking, mechanic) => {
+    const bookingMechanic = booking?.mechanic || {};
+    const bookingValues = [
+      booking?.mechanicId,
+      bookingMechanic.id,
+      bookingMechanic._id,
+      bookingMechanic.userId,
+      bookingMechanic.mechanicID,
+      bookingMechanic.mechanicId,
+    ]
+      .filter(Boolean)
+      .map(normalizeValue);
+
+    const mechanicValues = [
+      mechanic?.id,
+      mechanic?._id,
+      mechanic?.userId,
+      mechanic?.mechanicID,
+      mechanic?.mechanicId,
+      mechanic?.kyc?.mechanicId,
+    ]
+      .filter(Boolean)
+      .map(normalizeValue);
+
+    return bookingValues.some((value) => mechanicValues.includes(value));
+  };
+
+  const isActiveBookingStatus = (status) =>
+    ACTIVE_BOOKING_STATUSES.has(normalizeValue(status));
+
+  const resolveEffectiveLiveStatus = (mechanic, activeBookings = []) => {
+    if (!isMechanicApproved(mechanic)) {
+      return "offline";
+    }
+
+    if (activeBookings.length > 0) {
+      return "engaged";
+    }
+
+    const raw = normalizeValue(mechanic?.rawStatus || mechanic?.liveStatus || "offline");
+    return raw === "online" ? "online" : "offline";
+  };
+
   const parseTimeToMinutes = (value) => {
     if (!value && value !== 0) return null;
 
@@ -374,58 +431,34 @@ const AdminMechanicProfile = () => {
   };
 
   const getMechanicBookingContext = (mechanic, selectedTimeSlot = "all") => {
+    if (!isMechanicApproved(mechanic)) {
+      return {
+        relatedBookings: [],
+        activeBookings: [],
+        available: false,
+      };
+    }
+
     const relatedBookings = bookings.filter((booking) => {
       if (!bookingMatchesDateFilters(booking)) return false;
-
-      const bookingMechanic = booking.mechanic || {};
-      const bookingValues = [
-        bookingMechanic.id,
-        bookingMechanic._id,
-        bookingMechanic.userId,
-        bookingMechanic.mechanicID,
-        bookingMechanic.mechanicId,
-        bookingMechanic.fullName,
-        bookingMechanic.name,
-      ]
-        .filter(Boolean)
-        .map(normalizeValue);
-
-      const mechanicValues = [
-        mechanic.id,
-        mechanic._id,
-        mechanic.userId,
-        mechanic.mechanicID,
-        mechanic.mechanicId,
-        mechanic.kyc?.mechanicId,
-        mechanic.fullName,
-        mechanic.name,
-      ]
-        .filter(Boolean)
-        .map(normalizeValue);
-
-      const sharedValue = bookingValues.some((value) => mechanicValues.includes(value));
-      if (sharedValue) return true;
-
-      const bookingName = normalizeValue(bookingMechanic.fullName || bookingMechanic.name);
-      const mechanicName = normalizeValue(mechanic.fullName || mechanic.name);
-      return Boolean(bookingName && mechanicName && bookingName === mechanicName);
+      return bookingBelongsToMechanic(booking, mechanic);
     });
 
-    const availableStatuses = new Set(["complete", "completed", "work_done", "declined", "cancelled", "rejected", "closed"]);
     const activeBookings = relatedBookings.filter((booking) => {
-      const matchesSlot = selectedTimeSlot === "all" || getBookingTimeSlotBucket(booking) === selectedTimeSlot;
-      return matchesSlot && !availableStatuses.has(normalizeValue(booking.status));
+      const matchesSlot =
+        selectedTimeSlot === "all" ||
+        getBookingTimeSlotBucket(booking) === selectedTimeSlot;
+      return matchesSlot && isActiveBookingStatus(booking.status);
     });
-    const isBusy = activeBookings.length > 0;
 
     return {
       relatedBookings,
       activeBookings,
-      available: !isBusy,
+      available: activeBookings.length === 0,
     };
   };
 
-  const getMechanicAvailability = (mechanic) => {
+  const getMechanicAvailability = (mechanic, activeBookings = []) => {
     const approvalStatus = (mechanic?.status || "").toLowerCase();
 
     if (approvalStatus === "rejected") {
@@ -459,7 +492,17 @@ const AdminMechanicProfile = () => {
       };
     }
 
-    const live = (mechanic?.liveStatus || "offline").toLowerCase();
+    if (activeBookings.length > 0) {
+      return {
+        key: "busy",
+        label: "Busy",
+        tone: "bg-amber-50 text-amber-700 border-amber-200",
+        available: false,
+        icon: <Clock3 size={14} />,
+      };
+    }
+
+    const live = resolveEffectiveLiveStatus(mechanic, activeBookings);
 
     if (live === "offline") {
       return {
@@ -468,28 +511,6 @@ const AdminMechanicProfile = () => {
         tone: "bg-slate-100 text-slate-600 border-slate-200",
         available: false,
         icon: <WifiOff size={14} />,
-      };
-    }
-
-    if (live === "engaged") {
-      return {
-        key: "busy",
-        label: "Busy",
-        tone: "bg-amber-50 text-amber-700 border-amber-200",
-        available: false,
-        icon: <Clock3 size={14} />,
-      };
-    }
-
-    const { activeBookings } = getMechanicBookingContext(mechanic, bookingTimeSlotFilter);
-
-    if (activeBookings.length > 0) {
-      return {
-        key: "busy",
-        label: "Busy",
-        tone: "bg-amber-50 text-amber-700 border-amber-200",
-        available: false,
-        icon: <Clock3 size={14} />,
       };
     }
 
@@ -510,8 +531,9 @@ const AdminMechanicProfile = () => {
     const keyword = search.toLowerCase();
     const name = (m.name || m.fullName || "").toString().toLowerCase();
     const phone = (m.phone || "").toString();
-    const availability = getMechanicAvailability(m);
     const { activeBookings } = getMechanicBookingContext(m, bookingTimeSlotFilter);
+    const availability = getMechanicAvailability(m, activeBookings);
+    const effectiveLiveStatus = resolveEffectiveLiveStatus(m, activeBookings);
     const matchesSearch = (
       name.includes(keyword) ||
       phone.includes(keyword) ||
@@ -519,7 +541,7 @@ const AdminMechanicProfile = () => {
     );
 
     const matchesStatus = statusFilter === 'all' || (m.status && m.status.toLowerCase() === statusFilter.toLowerCase());
-    const matchesLiveStatus = liveStatusFilter === 'all' || (m.liveStatus || 'offline').toLowerCase() === liveStatusFilter.toLowerCase();
+    const matchesLiveStatus = liveStatusFilter === 'all' || effectiveLiveStatus === liveStatusFilter.toLowerCase();
     const matchesAvailability =
       effectiveAvailabilityFilter === "all" ||
       availability.key === effectiveAvailabilityFilter;
@@ -528,9 +550,18 @@ const AdminMechanicProfile = () => {
     return matchesSearch && matchesStatus && matchesLiveStatus && matchesAvailability && matchesTimeSlot;
   });
 
-  const onlineCount = filteredMechanics.filter((m) => (m.liveStatus || 'offline') === 'online').length;
-  const engagedCount = filteredMechanics.filter((m) => (m.liveStatus || 'offline') === 'engaged').length;
-  const offlineCount = filteredMechanics.filter((m) => (m.liveStatus || 'offline') === 'offline').length;
+  const onlineCount = filteredMechanics.filter((m) => {
+    const { activeBookings } = getMechanicBookingContext(m, bookingTimeSlotFilter);
+    return resolveEffectiveLiveStatus(m, activeBookings) === 'online';
+  }).length;
+  const engagedCount = filteredMechanics.filter((m) => {
+    const { activeBookings } = getMechanicBookingContext(m, bookingTimeSlotFilter);
+    return resolveEffectiveLiveStatus(m, activeBookings) === 'engaged';
+  }).length;
+  const offlineCount = filteredMechanics.filter((m) => {
+    const { activeBookings } = getMechanicBookingContext(m, bookingTimeSlotFilter);
+    return resolveEffectiveLiveStatus(m, activeBookings) === 'offline';
+  }).length;
   const lockedCount = filteredMechanics.filter((m) => m.isLocked).length;
 
   return (
@@ -684,17 +715,18 @@ const AdminMechanicProfile = () => {
               {loading ? (
                 [...Array(8)].map((_, i) => <MechanicSkeleton key={i} />)
               ) : filteredMechanics.map((m) => {
-                const availability = getMechanicAvailability(m);
-                const liveStatus = getLiveStatusMeta(m);
                 const { activeBookings } = getMechanicBookingContext(m, bookingTimeSlotFilter);
+                const availability = getMechanicAvailability(m, activeBookings);
+                const liveStatus = getLiveStatusMeta(m, activeBookings);
+                const effectiveLiveStatus = resolveEffectiveLiveStatus(m, activeBookings);
                 return (
                   <div key={m.id || m.email || m.mechanicId} className="group bg-white rounded-2xl border border-slate-200 p-5 hover:shadow-xl transition-all duration-300 relative overflow-hidden">
-                    <div className={`absolute top-0 right-0 h-1.5 w-full ${m.status === 'suspended' ? 'bg-red-500' : m.status === 'approved' ? 'bg-green-500' : 'bg-amber-500'}`} />
+                    <div className={`absolute top-0 right-0 h-1.5 w-full ${m.status === 'rejected' || m.status === 'suspended' ? 'bg-red-500' : m.status === 'approved' ? 'bg-green-500' : 'bg-amber-500'}`} />
 
                     <div className="flex flex-col items-center">
                       <div className="relative mt-2">
                         <img src={m.profilePhoto || 'https://via.placeholder.com/150'} className="w-20 h-20 rounded-full object-cover border-4 border-slate-50 shadow-sm" alt={m.name} />
-                        <span className={`absolute bottom-0 right-0 w-5 h-5 rounded-full border-2 border-white ${m.liveStatus === 'online' ? 'bg-green-500' : m.liveStatus === 'engaged' ? 'bg-blue-500' : 'bg-slate-400'}`} />
+                        <span className={`absolute bottom-0 right-0 w-5 h-5 rounded-full border-2 border-white ${effectiveLiveStatus === 'online' ? 'bg-green-500' : effectiveLiveStatus === 'engaged' ? 'bg-blue-500' : 'bg-slate-400'}`} />
                       </div>
                       <h3 className="mt-4 font-bold text-slate-800 text-lg line-clamp-1">{m.name}</h3>
                       <div className="flex items-center text-slate-500 text-sm gap-1 mb-2">
@@ -715,7 +747,7 @@ const AdminMechanicProfile = () => {
                       )}
                       <p className="text-slate-400 text-xs mb-4">Mechanic ID: {m.mechanicId || m.kyc?.mechanicId || m.id || 'N/A'}</p>
 
-                      {activeBookings.length > 0 && (
+                      {isMechanicApproved(m) && activeBookings.length > 0 && (
                         <div className="w-full mb-3 rounded-xl border border-amber-200 bg-amber-50 p-2.5">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 mb-1.5">Active Booking Slots</p>
                           <div className="flex flex-col gap-1.5">
@@ -774,9 +806,9 @@ const AdminMechanicProfile = () => {
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-100">
                       {filteredMechanics.map((m) => {
-                        const availability = getMechanicAvailability(m);
-                        const liveStatus = getLiveStatusMeta(m);
                         const { activeBookings } = getMechanicBookingContext(m, bookingTimeSlotFilter);
+                        const availability = getMechanicAvailability(m, activeBookings);
+                        const liveStatus = getLiveStatusMeta(m, activeBookings);
                         return (
                           <tr key={m.id || m.email || m.mechanicId} className="hover:bg-gray-50">
                             <td className="px-4 py-3 text-sm text-gray-700">{m.mechanicId || m.kyc?.mechanicId || m.id || ''}</td>
@@ -801,7 +833,7 @@ const AdminMechanicProfile = () => {
                                   {availability.icon}
                                   {availability.label}
                                 </span>
-                                {activeBookings.length > 0 && (
+                                {isMechanicApproved(m) && activeBookings.length > 0 && (
                                   <div className="flex flex-col gap-1.5">
                                     {activeBookings.map((booking) => {
                                       const bookingId = booking.bookingId || booking._id || booking.id;
@@ -849,7 +881,21 @@ const AdminMechanicProfile = () => {
             </div>
           )}
 
-          {selectedMechanic && (
+          {selectedMechanic && (() => {
+            const { activeBookings: selectedActiveBookings } = getMechanicBookingContext(
+              selectedMechanic,
+              bookingTimeSlotFilter
+            );
+            const selectedAvailability = getMechanicAvailability(
+              selectedMechanic,
+              selectedActiveBookings
+            );
+            const selectedLiveStatus = getLiveStatusMeta(
+              selectedMechanic,
+              selectedActiveBookings
+            );
+
+            return (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
               <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
 
@@ -872,13 +918,13 @@ const AdminMechanicProfile = () => {
                         }`}>
                           {selectedMechanic.status || "pending"}
                         </span>
-                        <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${getLiveStatusMeta(selectedMechanic).tone}`}>
-                          {getLiveStatusMeta(selectedMechanic).icon}
-                          {getLiveStatusMeta(selectedMechanic).label}
+                        <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${selectedLiveStatus.tone}`}>
+                          {selectedLiveStatus.icon}
+                          {selectedLiveStatus.label}
                         </span>
-                        <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${getMechanicAvailability(selectedMechanic).tone}`}>
-                          {getMechanicAvailability(selectedMechanic).icon}
-                          {getMechanicAvailability(selectedMechanic).label}
+                        <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${selectedAvailability.tone}`}>
+                          {selectedAvailability.icon}
+                          {selectedAvailability.label}
                         </span>
                         {selectedMechanic.isLocked && (
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-amber-100 text-amber-800">
@@ -910,16 +956,14 @@ const AdminMechanicProfile = () => {
 
                 {/* Modal Body */}
                 <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-white">
-                  {(() => {
-                    const { activeBookings } = getMechanicBookingContext(selectedMechanic, bookingTimeSlotFilter);
-                    return !getMechanicAvailability(selectedMechanic).available && activeBookings.length > 0 ? (
+                  {isMechanicApproved(selectedMechanic) && selectedActiveBookings.length > 0 ? (
                       <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4">
                         <div className="flex items-center gap-2 mb-3">
                           <Clock3 size={16} className="text-amber-600" />
                           <h3 className="text-sm font-semibold text-amber-800">Active Service Tickets</h3>
                         </div>
                         <div className="flex flex-col gap-2">
-                          {activeBookings.map((booking) => {
+                          {selectedActiveBookings.map((booking) => {
                             const bookingId = booking.bookingId || booking._id || booking.id;
                             if (!bookingId) return null;
                             return (
@@ -935,8 +979,7 @@ const AdminMechanicProfile = () => {
                           })}
                         </div>
                       </div>
-                    ) : null;
-                  })()}
+                    ) : null}
                   {activeTab === 'overview' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                       <div className="space-y-6">
@@ -946,7 +989,7 @@ const AdminMechanicProfile = () => {
                           <InfoCard label="Phone Number" value={selectedMechanic.phone} icon={<Phone size={16} />} />
                           <InfoCard label="Mechanic ID" value={selectedMechanic.mechanicId || selectedMechanic.kyc?.mechanicId || selectedMechanic.id || "N/A"} icon={<ShieldCheck size={16} />} />
                           <InfoCard label="User ID" value={selectedMechanic.id || "N/A"} icon={<FileText size={16} />} />
-                          <InfoCard label="Live Status" value={getLiveStatusMeta(selectedMechanic).label} icon={<Activity size={16} />} />
+                          <InfoCard label="Live Status" value={selectedLiveStatus.label} icon={<Activity size={16} />} />
                           {selectedMechanic.isLocked && (
                             <InfoCard label="Locked Until" value={formatLockedTill(selectedMechanic.lockedTill)} icon={<Clock3 size={16} />} />
                           )}
@@ -1195,7 +1238,8 @@ const AdminMechanicProfile = () => {
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
         </main>
       </div>
     </div>

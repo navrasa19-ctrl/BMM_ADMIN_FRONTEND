@@ -37,10 +37,15 @@ const TopBar = ({ toggleSidebar }) => {
     },
 
     "/mechanic-profile": {
-      title: "Mechanic Profiles",
+      title: "Mechanic  Profiles",
       subtitle: "View, verify, and manage registered mechanics and their details",
     },
-
+   
+    "/mechanic-status": {
+      title: "Mechanic Status Tracking",
+      subtitle: "Track mechanic online and offline status changes daily, weekly, and monthly",
+    },
+  
     "/mechanicaservices": {
       title: "Mechanic Services",
       subtitle: "Manage service categories, skills, and offerings by mechanics",
