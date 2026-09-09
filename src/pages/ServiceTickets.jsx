@@ -1243,7 +1243,7 @@ const ServiceTickets = () => {
   const [typeFilter, setTypeFilter] = useState("all");
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [showExportModal, setShowExportModal] = useState(false);
-  const [page, setPage] = useState(1);
+  const [lastDocId, setLastDocId] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const pageSize = 50;
@@ -1252,8 +1252,8 @@ const ServiceTickets = () => {
 
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
 
-  const fetchBookings = useCallback(async (pageNum = 1, resetData = true) => {
-    if (pageNum === 1) {
+  const fetchBookings = useCallback(async (cursor = null, resetData = true) => {
+    if (resetData) {
       setLoading(true);
       setError(null);
       if (abortControllerRef.current) abortControllerRef.current.abort();
@@ -1265,8 +1265,10 @@ const ServiceTickets = () => {
     try {
       // Create URL with pagination parameters
       const url = new URL(`${API_BASE_URL}/api/servicebookings/all-Admin_bookings`);
-      url.searchParams.append("page", pageNum);
       url.searchParams.append("limit", pageSize);
+      if (cursor) {
+        url.searchParams.append("lastDocId", cursor);
+      }
 
       const controller = abortControllerRef.current;
       const res = await Promise.race([
@@ -1282,24 +1284,30 @@ const ServiceTickets = () => {
       if (data.success && Array.isArray(data.data)) {
         if (resetData) {
           setBookings(data.data);
-          setPage(1);
         } else {
-          setBookings((prev) => [...prev, ...data.data]);
-          setPage(pageNum);
+          // Dedupe against already-loaded bookings so a backend that
+          // returns an overlapping/duplicate page (e.g. tied createdAt
+          // values) never produces repeated rows in the UI.
+          setBookings((prev) => {
+            const seen = new Set(prev.map((b) => b.bookingId));
+            const newItems = data.data.filter((b) => !seen.has(b.bookingId));
+            return [...prev, ...newItems];
+          });
         }
-        setHasMore(data.data.length === pageSize);
+        setLastDocId(data.lastDocId || null);
+        setHasMore(!!data.hasMore);
       } else {
         throw new Error("Invalid API response format");
       }
     } catch (err) {
       if (err.name !== "AbortError") {
         console.error(err);
-        if (pageNum === 1) {
+        if (resetData) {
           setError(err.message || "Failed to load service tickets");
         }
       }
     } finally {
-      if (pageNum === 1) {
+      if (resetData) {
         setLoading(false);
       } else {
         setLoadingMore(false);
@@ -1308,7 +1316,7 @@ const ServiceTickets = () => {
   }, [pageSize]);
 
   useEffect(() => {
-    fetchBookings(1, true);
+    fetchBookings(null, true);
     return () => {
       if (abortControllerRef.current) abortControllerRef.current.abort();
     };
@@ -1403,7 +1411,7 @@ const ServiceTickets = () => {
   };
 
   const handleLoadMore = () => {
-    fetchBookings(page + 1, false);
+    fetchBookings(lastDocId, false);
   };
 
   const handleBookingUpdate = (updatedBooking) => {
@@ -1430,7 +1438,7 @@ const ServiceTickets = () => {
             </div>
             <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
               <button
-                onClick={() => fetchBookings(1, true)}
+                onClick={() => fetchBookings(null, true)}
                 disabled={loading}
                 className="flex items-center justify-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg text-xs sm:text-sm font-medium hover:bg-red-700 disabled:opacity-60 touch-target whitespace-nowrap flex-shrink-0"
               >
@@ -1638,7 +1646,13 @@ const ServiceTickets = () => {
             </div>
           </div>
 
-          {hasMore && filteredBookings.length > 0 && (
+          {/*
+            NOTE: uses `bookings.length` (the full loaded set), not
+            `filteredBookings.length`. Otherwise an active status/search
+            filter that happens to match 0 rows on the current page would
+            hide "Load More" even though the server still has more data.
+          */}
+          {hasMore && bookings.length > 0 && (
             <div className="mt-6 flex justify-center">
               <button
                 onClick={handleLoadMore}
