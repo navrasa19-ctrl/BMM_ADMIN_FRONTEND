@@ -24,6 +24,7 @@ import {
   Trash2,
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { io } from "socket.io-client";
 import TopBar from "../components/TopBar.jsx";
 import Sidebar from "../components/Sidebar.jsx";
 
@@ -1315,12 +1316,53 @@ const ServiceTickets = () => {
     }
   }, [pageSize]);
 
+  // Silently pulls the latest page and merges only genuinely new tickets
+  // into state (by bookingId), without disturbing already-loaded pages
+  // or pagination cursors. Used to react to realtime "new ticket" events.
+  const fetchLatestAndMerge = useCallback(async () => {
+    try {
+      const url = new URL(`${API_BASE_URL}/api/servicebookings/all-Admin_bookings`);
+      url.searchParams.append("limit", pageSize);
+
+      const res = await fetch(url.toString());
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (data.success && Array.isArray(data.data)) {
+        setBookings((prev) => {
+          const seen = new Set(prev.map((b) => b.bookingId));
+          const newItems = data.data.filter((b) => !seen.has(b.bookingId));
+          if (newItems.length === 0) return prev;
+          return [...newItems, ...prev];
+        });
+      }
+    } catch (err) {
+      console.error("Realtime refresh failed:", err);
+    }
+  }, [pageSize]);
+
   useEffect(() => {
     fetchBookings(null, true);
     return () => {
       if (abortControllerRef.current) abortControllerRef.current.abort();
     };
   }, []);
+
+  // Realtime: instantly reflect newly created service tickets without
+  // requiring a manual refresh.
+  useEffect(() => {
+    const socket = io(API_BASE_URL, {
+      transports: ["websocket", "polling"],
+    });
+
+    socket.on("booking:created", () => {
+      fetchLatestAndMerge();
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [fetchLatestAndMerge]);
 
   useEffect(() => {
     const bookingIdParam = searchParams.get("bookingId");
