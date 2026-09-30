@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import TopBar from "../components/TopBar.jsx";
 import Sidebar from "../components/Sidebar.jsx";
+import { getAdminAuthHeaders } from "../adminAuth.js";
 
 /* ================= SKELETON ================= */
 const MechanicSkeleton = () => (
@@ -81,7 +82,9 @@ const AdminMechanicProfile = () => {
 
   const fetchServiceBookings = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/servicebookings/all-Admin_bookings`);
+      const res = await fetch(`${API_BASE}/api/servicebookings/all-Admin_bookings`, {
+        headers: await getAdminAuthHeaders(),
+      });
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         setBookings(data.data);

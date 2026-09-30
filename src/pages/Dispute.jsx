@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import TopBar from "../components/TopBar.jsx";
 import Sidebar from "../components/Sidebar.jsx";
+import { getAdminAuthHeaders } from "../adminAuth.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
 
@@ -137,7 +138,9 @@ const AdminDisputePage = () => {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${API_BASE}/api/servicebookings/admin/disputes`);
+      const res = await fetch(`${API_BASE}/api/servicebookings/admin/disputes`, {
+        headers: await getAdminAuthHeaders(),
+      });
       if (!res.ok) throw new Error(`API Error: ${res.status}`);
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
@@ -188,7 +191,9 @@ const AdminDisputePage = () => {
     setChatLoading(true);
     setChatError("");
     try {
-      const res = await fetch(`${API_BASE}/api/servicebookings/${bookingId}/chat`);
+      const res = await fetch(`${API_BASE}/api/servicebookings/${bookingId}/chat`, {
+        headers: await getAdminAuthHeaders(),
+      });
       if (!res.ok) throw new Error(`API Error: ${res.status}`);
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
@@ -220,7 +225,7 @@ const AdminDisputePage = () => {
         `${API_BASE}/api/servicebookings/admin/${selectedDispute.bookingId}/chat`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: await getAdminAuthHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ message }),
         }
       );
@@ -267,7 +272,7 @@ const AdminDisputePage = () => {
         `${API_BASE}/api/servicebookings/admin/update-dispute-status/${selectedDispute.id}`,
         {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: await getAdminAuthHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             status: editStatus,
             adminRemark: editRemark,
@@ -315,7 +320,7 @@ const AdminDisputePage = () => {
 
       const res = await fetch(endpoint, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAdminAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           mechanicId: reassignMechanicId,
           DateOfReassignment: reassignDate,

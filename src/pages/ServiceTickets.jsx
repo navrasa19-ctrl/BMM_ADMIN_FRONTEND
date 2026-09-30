@@ -27,6 +27,7 @@ import * as XLSX from "xlsx";
 import { io } from "socket.io-client";
 import TopBar from "../components/TopBar.jsx";
 import Sidebar from "../components/Sidebar.jsx";
+import { getAdminAuthHeaders } from "../adminAuth.js";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -570,7 +571,10 @@ const TicketDetailModal = ({ booking, onClose, onViewDispute, onBookingUpdate })
     try {
       const res = await fetch(
         `${API_BASE_URL}/api/servicebookings/${liveBooking.bookingId}/service/${itemId}?type=${type}`,
-        { method: "DELETE" }
+        {
+          method: "DELETE",
+          headers: await getAdminAuthHeaders(),
+        }
       );
       const data = await res.json().catch(() => ({}));
 
@@ -613,7 +617,7 @@ const TicketDetailModal = ({ booking, onClose, onViewDispute, onBookingUpdate })
     try {
       const res = await fetch(`${API_BASE_URL}/api/servicebookings/${booking.bookingId}/assign-mechanic`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: await getAdminAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ mechanicId: selectedMechanicId }),
       });
 
@@ -1272,8 +1276,9 @@ const ServiceTickets = () => {
       }
 
       const controller = abortControllerRef.current;
+      const headers = await getAdminAuthHeaders();
       const res = await Promise.race([
-        fetch(url.toString(), { signal: controller?.signal }),
+        fetch(url.toString(), { signal: controller?.signal, headers }),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error("Request timeout")), 15000)
         ),
@@ -1324,7 +1329,7 @@ const ServiceTickets = () => {
       const url = new URL(`${API_BASE_URL}/api/servicebookings/all-Admin_bookings`);
       url.searchParams.append("limit", pageSize);
 
-      const res = await fetch(url.toString());
+      const res = await fetch(url.toString(), { headers: await getAdminAuthHeaders() });
       if (!res.ok) return;
       const data = await res.json();
 

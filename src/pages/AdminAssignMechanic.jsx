@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Search, X, Wrench, User, Car, MapPin, Clock, Phone, Calendar, ChevronRight, AlertCircle } from "lucide-react";
 import TopBar from "../components/TopBar.jsx";
 import Sidebar from "../components/Sidebar.jsx";
+import { getAdminAuthHeaders } from "../adminAuth.js";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -99,7 +100,9 @@ const AdminAssignMechanic = () => {
     try {
       setLoading(true);
       setError("");
-      const res = await fetch(`${API_BASE_URL}/api/servicebookings/admin/all-admin-assigned-bookings`);
+      const res = await fetch(`${API_BASE_URL}/api/servicebookings/admin/all-admin-assigned-bookings`, {
+        headers: await getAdminAuthHeaders(),
+      });
       if (!res.ok) throw new Error(`API Error: ${res.status}`);
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
