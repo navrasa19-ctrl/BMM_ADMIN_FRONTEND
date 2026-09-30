@@ -1,6 +1,7 @@
 import React from "react";
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import LoginForm from "./components/LoginForm";
+import RequireAdmin from "./components/RequireAdmin";
 import MechanicServices from "./pages/MechanicServices";
 import AddBanner from "./pages/AddBanner";
 import EmergencyIssue from "./pages/EmergencyIssue";
@@ -25,24 +26,27 @@ function App() {
     <Router>
       <Routes>
         <Route path="/" element={<LoginForm />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/mechanicaservices" element={<MechanicServices />} />
-        <Route path="/mechanic-status" element={<MechanicStatus />} />
-        <Route path="/add-banner" element={<AddBanner/>} />
-        <Route path="/visible-issues" element={<EmergencyIssue/>} />
-        <Route path="/service" element={<Service/>} />
-        <Route path="/customer-profile" element={<Profile/>} />
-        <Route path="/mechanic-profile" element={<MechanicProfile/>} />
-        <Route path="/help" element={<HelpSupport/>} />
-        <Route path="/dispute" element={<Dispute/>} />
-        <Route path="/plan" element={<Plan/>} />
-        <Route path="/job-part" element={<JobPart/>} />
-        <Route path="/assests" element={<CustomerAssets/>} />
-        <Route path="/add-review" element={<AddReview/>} />
-        <Route path="/customer-booking" element={<CustomerBooking/>} />
-        <Route path="/service-tickets" element={<ServiceTickets/>} />
-        <Route path="/admin-assign-mechanic" element={<AdminAssignMechanic/>} />
-        <Route path="/customer-vehicles" element={<CustomerVehicles/>} />
+        <Route element={<RequireAdmin />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/mechanicaservices" element={<MechanicServices />} />
+          <Route path="/mechanic-status" element={<MechanicStatus />} />
+          <Route path="/add-banner" element={<AddBanner/>} />
+          <Route path="/visible-issues" element={<EmergencyIssue/>} />
+          <Route path="/service" element={<Service/>} />
+          <Route path="/customer-profile" element={<Profile/>} />
+          <Route path="/mechanic-profile" element={<MechanicProfile/>} />
+          <Route path="/help" element={<HelpSupport/>} />
+          <Route path="/dispute" element={<Dispute/>} />
+          <Route path="/plan" element={<Plan/>} />
+          <Route path="/job-part" element={<JobPart/>} />
+          <Route path="/assests" element={<CustomerAssets/>} />
+          <Route path="/add-review" element={<AddReview/>} />
+          <Route path="/customer-booking" element={<CustomerBooking/>} />
+          <Route path="/service-tickets" element={<ServiceTickets/>} />
+          <Route path="/admin-assign-mechanic" element={<AdminAssignMechanic/>} />
+          <Route path="/customer-vehicles" element={<CustomerVehicles/>} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
   );

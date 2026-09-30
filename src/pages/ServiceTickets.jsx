@@ -200,10 +200,18 @@ const formatTimeSlot = (slot) => {
   return `${slot.from}${to}`;
 };
 
+const hasCoordinates = (lat, lng) =>
+  lat != null && lng != null && lat !== "" && lng !== "" &&
+  Number.isFinite(Number(lat)) && Number.isFinite(Number(lng));
+
 const formatCoordinates = (lat, lng) => {
-  if (lat == null || lng == null) return EMPTY;
+  if (!hasCoordinates(lat, lng)) return EMPTY;
   return `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
 };
+
+// Apps send raw "lat, lng" as address when reverse geocoding fails
+const isCoordinateText = (text) =>
+  /^\s*-?\d{1,3}(\.\d+)?\s*,\s*-?\d{1,3}(\.\d+)?\s*$/.test(String(text || ""));
 
 const formatDistance = (km) => {
   if (km == null || km === "") return EMPTY;
@@ -213,24 +221,27 @@ const formatDistance = (km) => {
 };
 
 const getMechanicMapLink = (tracking) => {
-  if (!tracking?.latitude || !tracking?.longitude) return null;
+  if (!hasCoordinates(tracking?.latitude, tracking?.longitude)) return null;
   return `https://www.google.com/maps/?q=${tracking.latitude},${tracking.longitude}`;
 };
 
 const MechanicLiveLocationCard = ({ tracking }) => {
-  if (!tracking?.latitude || !tracking?.longitude) return null;
+  if (!hasCoordinates(tracking?.latitude, tracking?.longitude)) return null;
 
   const mapLink = getMechanicMapLink(tracking);
   const coordinates = formatCoordinates(tracking.latitude, tracking.longitude);
-  const address = displayText(tracking.address);
+  // hide the address when it is just the same coordinates again
+  const address = isCoordinateText(tracking.address) ? EMPTY : displayText(tracking.address);
+  // backend derives isOnline from how recent the location is
   const isOnline = tracking.isOnline ? "Yes" : "No";
   const lastSeen = tracking.updatedAt ? formatDate(tracking.updatedAt) : EMPTY;
+  const title = tracking.isOnline ? "Mechanic Live Location" : "Mechanic Last Known Location";
 
   return (
     <div className="rounded-lg border-2 border-red-200 bg-red-50 overflow-hidden">
       <div className="px-3 sm:px-4 py-2.5 sm:py-3 bg-red-100 border-b border-red-200 flex items-center gap-2">
         <Navigation size={16} className="text-red-600 flex-shrink-0" />
-        <h4 className="text-xs sm:text-sm font-bold text-red-800">Mechanic Live Location</h4>
+        <h4 className="text-xs sm:text-sm font-bold text-red-800">{title}</h4>
       </div>
       <div className="p-3 sm:p-4 space-y-3 sm:space-y-4">
         {/* Coordinates with Map Link */}
@@ -274,7 +285,7 @@ const MechanicLiveLocationCard = ({ tracking }) => {
             </div>
           </div>
           <div className="bg-white px-2 py-2 rounded border border-red-100">
-            <p className="text-[8px] font-semibold text-red-600 uppercase tracking-wide mb-0.5">Last Seen</p>
+            <p className="text-[8px] font-semibold text-red-600 uppercase tracking-wide mb-0.5">Last Updated</p>
             <p className="text-[10px] font-semibold text-red-900 line-clamp-2">{lastSeen}</p>
           </div>
         </div>
@@ -918,10 +929,10 @@ const TicketDetailModal = ({ booking, onClose, onViewDispute, onBookingUpdate })
                       label: "GPS Coordinates",
                       value: formatCoordinates(location.latitude, location.longitude),
                       mono: true,
-                      show: location.latitude != null,
+                      show: hasCoordinates(location.latitude, location.longitude),
                     },
                     {
-                      label: "Distance to Customer",
+                      label: "Mechanic Distance",
                       value: formatDistance(tracking.distanceFromCustomerKm),
                       show: tracking.enabled && tracking.distanceFromCustomerKm != null,
                     },
@@ -929,9 +940,9 @@ const TicketDetailModal = ({ booking, onClose, onViewDispute, onBookingUpdate })
                 />
               </div>
 
-              {/* Mechanic Live Location */}
-              {(tracking.latitude != null || tracking.mechanicLocation?.latitude != null) && (
-                <MechanicLiveLocationCard tracking={tracking.mechanicLocation || tracking} />
+              {/* Mechanic Live / Last Known Location */}
+              {tracking.mechanicLocation && (
+                <MechanicLiveLocationCard tracking={tracking.mechanicLocation} />
               )}
             </div>
           </SectionCard>
@@ -1182,7 +1193,7 @@ const buildAndExport = (bookingsToExport, { fileName, sheetName }) => {
     const vehicle = b.vehicle || {};
     const location = b.location || {};
     const tracking = b.tracking || {};
-    const mechanicLocation = tracking.mechanicLocation || tracking;
+    const mechanicLocation = tracking.mechanicLocation || {};
 
     return {
       // "Booking ID": displayText(b.bookingId),
@@ -1201,10 +1212,8 @@ const buildAndExport = (bookingsToExport, { fileName, sheetName }) => {
       "Visit Cost": b.visitCost != null && b.visitCost !== "" ? formatCurrency(b.visitCost) : EMPTY,
       "Estimated Cost": getEstimatedCost(b),
       "Service Address": displayText(location.address),
-      "Mechanic Live Coordinates": mechanicLocation.latitude && mechanicLocation.longitude 
-        ? formatCoordinates(mechanicLocation.latitude, mechanicLocation.longitude)
-        : EMPTY,
-      "Mechanic Location": displayText(mechanicLocation.address),
+      "Mechanic Live Coordinates": formatCoordinates(mechanicLocation.latitude, mechanicLocation.longitude),
+      "Mechanic Location": isCoordinateText(mechanicLocation.address) ? EMPTY : displayText(mechanicLocation.address),
       "Mechanic Online": mechanicLocation.isOnline ? "Yes" : "No",
       "Booking Date": formatDate(b.createdAt),
     };
