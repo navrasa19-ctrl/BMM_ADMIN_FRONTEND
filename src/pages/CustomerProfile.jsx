@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
 import {
   X,
-  Mail,
   Phone,
-  Calendar,
   Search,
   Users,
+  MapPin,
+  Car,
 } from "lucide-react";
 import TopBar from "../components/TopBar.jsx";
 import Sidebar from "../components/Sidebar.jsx";
@@ -73,10 +73,24 @@ const AdminCustomerProfile = () => {
   const generateCusId = (u) => {
     if (!u) return "";
     if (u.customerId) return String(u.customerId);
-    const raw = u.userId || u.id || u.email || "";
+    const raw = u.userId || u.id || "";
     const s = String(raw);
     const clean = s.length > 8 ? s.slice(-6) : s;
     return `CUS${clean.toString().toUpperCase()}`;
+  };
+
+  const formatLocation = (location) => {
+    if (!location) return "—";
+    if (typeof location === "string") return location;
+    if (typeof location !== "object") return String(location);
+    return (
+      location.address ||
+      location.formattedAddress ||
+      [location.city, location.state, location.pincode || location.postalCode]
+        .filter(Boolean)
+        .join(", ") ||
+      "—"
+    );
   };
 
   const formatDateTime = (value) => {
@@ -99,7 +113,9 @@ const AdminCustomerProfile = () => {
 
     const matchesSearch =
       String(u.name || "").toLowerCase().includes(keyword) ||
-      String(u.email || "").toLowerCase().includes(keyword) ||
+      formatLocation(u.location).toLowerCase().includes(keyword) ||
+      String(u.vehicle || "").toLowerCase().includes(keyword) ||
+      String(u.vehicleNumber || "").toLowerCase().includes(keyword) ||
       String(u.phone || "").toLowerCase().includes(keyword) ||
       cusId.includes(keyword);
 
@@ -120,8 +136,10 @@ const AdminCustomerProfile = () => {
     const rows = filteredCustomers.map((c) => ({
       CustomerId: generateCusId(c),
       Name: c.name || "",
-      Email: c.email || "",
+      Location: formatLocation(c.location),
       Phone: c.phone || "",
+      Vehicle: c.vehicle || "",
+      VehicleNumber: c.vehicleNumber || "",
       Gender: c.gender || "",
       ProfileImage: c.profileImage || "",
     }));
@@ -182,7 +200,7 @@ const AdminCustomerProfile = () => {
               <Search size={18} className="absolute left-3 top-3 text-gray-400" />
               <input
                 type="text"
-                placeholder="Search by name, email or phone"
+                placeholder="Search by name, location, vehicle or phone"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 rounded-lg border focus:ring-2 focus:ring-red-500"
@@ -259,7 +277,7 @@ const AdminCustomerProfile = () => {
               ) : (
                 filteredCustomers.map((user) => (
                   <div
-                    key={user.userId || user.email || user.id}
+                    key={user.userId || user.id}
                     className="bg-white rounded-2xl shadow-sm border p-5"
                   >
                     <div className="flex justify-center">
@@ -275,10 +293,18 @@ const AdminCustomerProfile = () => {
                     </h3>
 
                     <p className="text-center text-sm text-gray-500 overflow-hidden text-ellipsis whitespace-nowrap max-w-full">
-                      {user.email}
+                      {formatLocation(user.location)}
                     </p>
 
                     <p className="text-center text-sm text-gray-500">{user.phone}</p>
+
+                    <p className="text-center text-sm text-gray-500 truncate">
+                      {user.vehicle || "—"}
+                    </p>
+
+                    <p className="text-center text-xs text-gray-500 truncate">
+                      Vehicle Number: {user.vehicleNumber || "—"}
+                    </p>
 
                     <p className="text-center text-xs text-gray-400 mt-2">Customer ID: {generateCusId(user)}</p>
 
@@ -305,19 +331,23 @@ const AdminCustomerProfile = () => {
                       <tr>
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Customer ID</th>
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Name</th>
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Email</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Location</th>
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Phone</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Vehicle</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Vehicle Number</th>
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Gender</th>
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-100">
                       {filteredCustomers.map((user) => (
-                        <tr key={user.userId || user.email || user.id} className="hover:bg-gray-50">
+                        <tr key={user.userId || user.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 text-sm text-gray-700">{generateCusId(user)}</td>
                           <td className="px-4 py-3 text-sm text-gray-700">{user.name}</td>
-                          <td className="px-4 py-3 text-sm text-gray-700">{user.email}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{formatLocation(user.location)}</td>
                           <td className="px-4 py-3 text-sm text-gray-700">{user.phone}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{user.vehicle || "—"}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{user.vehicleNumber || "—"}</td>
                           <td className="px-4 py-3 text-sm text-gray-700">{user.gender}</td>
                           <td className="px-4 py-3 text-sm text-gray-700">
                             <button
@@ -363,11 +393,12 @@ const AdminCustomerProfile = () => {
                 </div>
 
                 <div className="p-6 space-y-5">
+                  <Info label="Customer Name" value={selectedCustomer.name || "—"} />
+                  <Info label="Location" icon={MapPin} value={formatLocation(selectedCustomer.location)} />
+                  <Info label="Phone Number" icon={Phone} value={selectedCustomer.phone || "—"} />
+                  <Info label="Vehicle" icon={Car} value={selectedCustomer.vehicle || "—"} />
+                  <Info label="Vehicle Number" value={selectedCustomer.vehicleNumber || "—"} />
                   <Info label="Customer ID" value={generateCusId(selectedCustomer)} />
-                  <Info label="Email" icon={Mail} value={selectedCustomer.email} />
-                  <Info label="Mobile No." icon={Phone} value={selectedCustomer.phone} />
-                  <Info label="Date of Birth" icon={Calendar} value={selectedCustomer.dob} />
-                  <Info label="Gender" value={selectedCustomer.gender} />
                 </div>
 
                 <div className="p-4 border-t">

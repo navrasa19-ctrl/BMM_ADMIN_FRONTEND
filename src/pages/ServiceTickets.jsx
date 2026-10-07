@@ -22,12 +22,16 @@ import {
   ExternalLink,
   Navigation,
   Trash2,
+  Pencil,
+  AlertTriangle,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { io } from "socket.io-client";
 import TopBar from "../components/TopBar.jsx";
 import Sidebar from "../components/Sidebar.jsx";
 import { getAdminAuthHeaders } from "../adminAuth.js";
+import Toast from "../components/Toast.jsx";
+import { useToast } from "../hooks/useToast.js";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
@@ -66,6 +70,33 @@ const BOOKING_TYPE_OPTIONS = [
 ];
 
 const EMPTY = "Not available";
+
+const hasAdminRole = () => {
+  try {
+    return JSON.parse(localStorage.getItem("adminUser") || "null")?.role === "admin";
+  } catch {
+    return false;
+  }
+};
+
+const toTimeInputValue = (value) => {
+  const match = /^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$/i.exec(String(value || ""));
+  if (!match) return "";
+
+  let hours = Number(match[1]);
+  const minutes = Number(match[2] || 0);
+  const meridiem = (match[3] || "").toLowerCase();
+  if (minutes > 59) return "";
+  if (meridiem) {
+    if (hours < 1 || hours > 12) return "";
+    if (meridiem === "pm" && hours < 12) hours += 12;
+    if (meridiem === "am" && hours === 12) hours = 0;
+  } else if (hours > 23) {
+    return "";
+  }
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+};
 
 const formatStatus = (status) =>
   (status || "unknown")
@@ -494,9 +525,16 @@ const StarRating = ({ rating }) => (
   </div>
 );
 
-const TicketDetailModal = ({ booking, onClose, onViewDispute, onBookingUpdate }) => {
+const TicketDetailModal = ({
+  booking,
+  onClose,
+  onViewDispute,
+  onBookingUpdate,
+  onTicketDeleted,
+}) => {
   if (!booking) return null;
 
+  const isAdmin = hasAdminRole();
   const [mechanics, setMechanics] = useState([]);
   const [selectedMechanicId, setSelectedMechanicId] = useState("");
   const [assigningMechanic, setAssigningMechanic] = useState(false);
@@ -507,6 +545,20 @@ const TicketDetailModal = ({ booking, onClose, onViewDispute, onBookingUpdate })
   const [liveBooking, setLiveBooking] = useState(booking);
   const [deletingItemId, setDeletingItemId] = useState(null);
   const [deleteError, setDeleteError] = useState("");
+  const [editOpen, setEditOpen] = useState(false);
+  const [editDate, setEditDate] = useState(String(booking.bookingDate || "").slice(0, 10));
+  const [editFromTime, setEditFromTime] = useState(toTimeInputValue(booking.timeSlot?.from));
+  const [editToTime, setEditToTime] = useState(toTimeInputValue(booking.timeSlot?.to));
+  const [editMechanicId, setEditMechanicId] = useState(
+    booking.mechanicId || booking.mechanic?.userId || ""
+  );
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [editSuccess, setEditSuccess] = useState("");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletingTicket, setDeletingTicket] = useState(false);
+  const [ticketDeleteError, setTicketDeleteError] = useState("");
+  const [mechanicsError, setMechanicsError] = useState("");
 
   const customer = liveBooking.customer || {};
   const mechanic = assignedMechanic || liveBooking.mechanic || {};
@@ -551,25 +603,42 @@ const TicketDetailModal = ({ booking, onClose, onViewDispute, onBookingUpdate })
   }, [booking?.bookingId, booking?.status, booking?.mechanic, booking?.serviceDetails, booking?.equipmentDetails, booking?.totalAmount]);
 
   useEffect(() => {
-    if (!showAssignMechanic) {
+    if (!showAssignMechanic && !isAdmin) {
       setMechanics([]);
       return;
     }
 
     const fetchMechanics = async () => {
+      setMechanicsError("");
       try {
-        const res = await fetch(`${API_BASE_URL}/api/admin/mechanics`);
+        const res = await fetch(`${API_BASE_URL}/api/admin/mechanics`, {
+          headers: await getAdminAuthHeaders(),
+        });
         if (!res.ok) throw new Error(`API Error: ${res.status}`);
         const data = await res.json();
         const list = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
-        setMechanics(list.filter(Boolean));
+        setMechanics(
+          list.filter(
+            (item) => item && String(item.status || "").toLowerCase() === "approved"
+          )
+        );
       } catch (err) {
         console.error("Failed to load mechanics", err);
+        setMechanicsError(err.message || "Failed to load mechanics.");
       }
     };
 
     fetchMechanics();
-  }, [showAssignMechanic]);
+  }, [showAssignMechanic, isAdmin]);
+
+  useEffect(() => {
+    setEditDate(String(liveBooking.bookingDate || "").slice(0, 10));
+    setEditFromTime(toTimeInputValue(liveBooking.timeSlot?.from));
+    setEditToTime(toTimeInputValue(liveBooking.timeSlot?.to));
+    setEditMechanicId(
+      liveBooking.mechanicId || liveBooking.mechanic?.userId || ""
+    );
+  }, [liveBooking.bookingDate, liveBooking.timeSlot, liveBooking.mechanicId, liveBooking.mechanic]);
 
   const copyBookingId = () => {
     navigator.clipboard?.writeText(liveBooking.bookingId);
@@ -659,6 +728,111 @@ const TicketDetailModal = ({ booking, onClose, onViewDispute, onBookingUpdate })
     }
   };
 
+  const handleEditBooking = async (event) => {
+    event.preventDefault();
+    setEditError("");
+    setEditSuccess("");
+
+    const update = {};
+    const currentDate = String(liveBooking.bookingDate || "").slice(0, 10);
+    if (editDate !== currentDate) {
+      if (!editDate) {
+        setEditError("Scheduled date is required.");
+        return;
+      }
+      update.scheduledDate = editDate;
+    }
+
+    const currentFromTime = toTimeInputValue(liveBooking.timeSlot?.from);
+    const currentToTime = toTimeInputValue(liveBooking.timeSlot?.to);
+    const updatedTimeSlot = {};
+    if (editFromTime !== currentFromTime) updatedTimeSlot.from = editFromTime;
+    if (editToTime !== currentToTime) updatedTimeSlot.to = editToTime;
+    if (Object.keys(updatedTimeSlot).length > 0) {
+      if (!editFromTime) {
+        setEditError("Time slot start is required.");
+        return;
+      }
+      update.timeSlot = updatedTimeSlot;
+    }
+
+    const currentMechanicId =
+      liveBooking.mechanicId || liveBooking.mechanic?.userId || "";
+    if (editMechanicId !== currentMechanicId) {
+      if (!editMechanicId) {
+        setEditError("Select an approved mechanic.");
+        return;
+      }
+      update.mechanicId = editMechanicId;
+    }
+
+    if (Object.keys(update).length === 0) {
+      setEditError("Change at least one field before saving.");
+      return;
+    }
+
+    setSavingEdit(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/servicebookings/${encodeURIComponent(booking.bookingId)}`,
+        {
+          method: "PUT",
+          headers: await getAdminAuthHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify(update),
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success || !data.data) {
+        throw new Error(data.message || "Failed to update service ticket.");
+      }
+
+      const updatedBooking = data.data;
+      if (updatedBooking.mechanic) {
+        updatedBooking.mechanic = {
+          ...updatedBooking.mechanic,
+          fullName:
+            updatedBooking.mechanic.fullName || updatedBooking.mechanic.name,
+          mechanicID:
+            updatedBooking.mechanic.mechanicID ||
+            updatedBooking.mechanic.mechanicId,
+        };
+      }
+      setLiveBooking(updatedBooking);
+      setAssignedMechanic(updatedBooking.mechanic || null);
+      setBookingStatus(updatedBooking.status);
+      onBookingUpdate?.(updatedBooking);
+      setEditSuccess("Service ticket updated successfully.");
+      setEditOpen(false);
+    } catch (err) {
+      setEditError(err.message || "Failed to update service ticket.");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDeleteTicket = async () => {
+    setDeletingTicket(true);
+    setTicketDeleteError("");
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/servicebookings/${encodeURIComponent(booking.bookingId)}`,
+        {
+          method: "DELETE",
+          headers: await getAdminAuthHeaders(),
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Failed to delete service ticket.");
+      }
+      onTicketDeleted?.(booking.bookingId);
+    } catch (err) {
+      setTicketDeleteError(err.message || "Failed to delete service ticket.");
+    } finally {
+      setDeletingTicket(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm">
       <div className="bg-gray-50 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-2xl md:max-w-3xl lg:max-w-4xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
@@ -685,6 +859,33 @@ const TicketDetailModal = ({ booking, onClose, onViewDispute, onBookingUpdate })
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {isAdmin && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTicketDeleteError("");
+                    setShowDeleteConfirm(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs sm:text-sm font-semibold text-red-700 hover:bg-red-100"
+                >
+                  <Trash2 size={15} />
+                  Delete
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditError("");
+                    setEditSuccess("");
+                    setEditOpen((open) => !open);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs sm:text-sm font-semibold text-blue-700 hover:bg-blue-100"
+                >
+                  <Pencil size={15} />
+                  Edit
+                </button>
+              </>
+            )}
             {booking.dispute?.isRaised && (
               <button
                 type="button"
@@ -721,7 +922,105 @@ const TicketDetailModal = ({ booking, onClose, onViewDispute, onBookingUpdate })
         </div>
 
         <div className="overflow-y-auto p-3 sm:p-4 md:p-5 space-y-3 sm:space-y-4">
-          {showAssignMechanic && (
+          {editSuccess && (
+            <p role="status" className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+              {editSuccess}
+            </p>
+          )}
+          {isAdmin && editOpen && (
+            <SectionCard title="Edit Service Ticket" icon={Pencil}>
+              <form onSubmit={handleEditBooking} className="space-y-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="space-y-1 text-sm font-medium text-gray-700">
+                    Scheduled date
+                    <input
+                      type="date"
+                      value={editDate}
+                      onChange={(event) => setEditDate(event.target.value)}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm font-medium text-gray-700">
+                    Assigned mechanic
+                    <select
+                      value={editMechanicId}
+                      onChange={(event) => setEditMechanicId(event.target.value)}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2"
+                    >
+                      {!editMechanicId && <option value="">Select mechanic</option>}
+                      {editMechanicId &&
+                        !mechanics.some(
+                          (item) =>
+                            String(item.userId || item.id || item._id || "") ===
+                            String(editMechanicId)
+                        ) && (
+                        <option value={editMechanicId}>
+                          Current — {mechanic.fullName || mechanic.name || "Assigned mechanic"}
+                        </option>
+                      )}
+                      {mechanics.map((item) => {
+                        const mechanicId =
+                          item.userId || item.id || item._id || "";
+                        if (!mechanicId) return null;
+                        return (
+                          <option key={mechanicId} value={mechanicId}>
+                            {item.mechanicId ? `${item.mechanicId} — ` : ""}
+                            {item.fullName || item.name || "Unnamed mechanic"}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm font-medium text-gray-700">
+                    Time slot start
+                    <input
+                      type="time"
+                      value={editFromTime}
+                      onChange={(event) => setEditFromTime(event.target.value)}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm font-medium text-gray-700">
+                    Time slot end
+                    <input
+                      type="time"
+                      value={editToTime}
+                      onChange={(event) => setEditToTime(event.target.value)}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2"
+                    />
+                  </label>
+                </div>
+                {mechanicsError && (
+                  <p role="alert" className="text-sm text-red-600">
+                    {mechanicsError}
+                  </p>
+                )}
+                {editError && (
+                  <p role="alert" className="text-sm text-red-600">
+                    {editError}
+                  </p>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditOpen(false)}
+                    disabled={savingEdit}
+                    className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingEdit}
+                    className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {savingEdit ? "Saving..." : "Save changes"}
+                  </button>
+                </div>
+              </form>
+            </SectionCard>
+          )}
+          {isAdmin && showAssignMechanic && (
             <SectionCard title="Assign Mechanic" icon={Wrench}>
               <div className="space-y-3">
                 <p className="text-xs sm:text-sm text-gray-600">
@@ -1133,6 +1432,49 @@ const TicketDetailModal = ({ booking, onClose, onViewDispute, onBookingUpdate })
           )}
         </div>
       </div>
+      {isAdmin && showDeleteConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-ticket-title"
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+          >
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600">
+              <AlertTriangle size={24} />
+            </div>
+            <h3 id="delete-ticket-title" className="mt-4 text-lg font-bold text-gray-900">
+              Delete service ticket?
+            </h3>
+            <p className="mt-2 text-sm text-gray-600">
+              Ticket {booking.bookingId} will be permanently deleted. This action cannot be undone.
+            </p>
+            {ticketDeleteError && (
+              <p role="alert" className="mt-3 text-sm text-red-600">
+                {ticketDeleteError}
+              </p>
+            )}
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deletingTicket}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteTicket}
+                disabled={deletingTicket}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-wait disabled:opacity-60"
+              >
+                {deletingTicket ? "Deleting..." : "Delete ticket"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1260,6 +1602,7 @@ const ServiceTickets = () => {
   const [lastDocId, setLastDocId] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const { toasts, addToast } = useToast();
   const pageSize = 50;
   const abortControllerRef = useRef(null);
   const debouncedSearch = useDebounce(search, 300);
@@ -1475,6 +1818,12 @@ const ServiceTickets = () => {
     setBookings((prev) =>
       prev.map((b) => (b.bookingId === updatedBooking.bookingId ? { ...b, ...updatedBooking } : b))
     );
+  };
+
+  const handleTicketDeleted = (bookingId) => {
+    setBookings((prev) => prev.filter((item) => item.bookingId !== bookingId));
+    setSelectedBooking(null);
+    addToast("Service ticket deleted successfully.", "success");
   };
 
   return (
@@ -1729,12 +2078,14 @@ const ServiceTickets = () => {
           onClose={() => setSelectedBooking(null)}
           onViewDispute={() => navigate(`/dispute?bookingId=${encodeURIComponent(selectedBooking.bookingId)}`)}
           onBookingUpdate={handleBookingUpdate}
+          onTicketDeleted={handleTicketDeleted}
         />
       )}
 
       {showExportModal && (
         <ExportModal allCount={bookings.length} onClose={() => setShowExportModal(false)} onExport={handleExport} />
       )}
+      <Toast toasts={toasts} />
     </div>
   );
 };

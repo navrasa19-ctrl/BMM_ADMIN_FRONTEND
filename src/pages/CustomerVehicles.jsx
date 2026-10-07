@@ -41,6 +41,24 @@ const formatDateTime = (iso) => {
   }
 };
 
+const getVehicleTimestamp = (vehicle) => {
+  const value = vehicle?.updatedAt || vehicle?.createdAt;
+  if (value && typeof value === "object") {
+    const seconds = value.seconds ?? value._seconds;
+    if (Number.isFinite(seconds)) {
+      const nanoseconds = value.nanoseconds ?? value._nanoseconds ?? 0;
+      return seconds * 1000 + Math.floor(nanoseconds / 1e6);
+    }
+  }
+  const timestamp = new Date(value || "").getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const sortVehiclesNewestFirst = (vehicles = []) =>
+  [...vehicles].sort(
+    (a, b) => getVehicleTimestamp(b) - getVehicleTimestamp(a)
+  );
+
 const getInitials = (name) => {
   if (!name) return "CU";
   return name
@@ -70,7 +88,18 @@ const CustomerVehicles = () => {
       const res = await fetch(`${API_BASE_URL}/api/customer-vehicles/all`);
       const data = await res.json();
       if (res.ok && data.success && Array.isArray(data.data)) {
-        setCustomerVehicles(data.data);
+        setCustomerVehicles(
+          data.data
+            .map((entry) => ({
+              ...entry,
+              vehicles: sortVehiclesNewestFirst(entry.vehicles),
+            }))
+            .sort(
+              (a, b) =>
+                getVehicleTimestamp(b.vehicles[0]) -
+                getVehicleTimestamp(a.vehicles[0])
+            )
+        );
       } else {
         throw new Error(data.message || "Could not load customer vehicles.");
       }
@@ -101,7 +130,7 @@ const CustomerVehicles = () => {
 
     return customerVehicles
       .map((entry) => {
-        const vehicles = entry.vehicles.filter((vehicle) => {
+        const vehicles = sortVehiclesNewestFirst(entry.vehicles).filter((vehicle) => {
           const matchesSearch = normalizedSearch
             ? [
                 entry.customer.name,
@@ -261,7 +290,7 @@ const CustomerVehicles = () => {
                             </div>
                             <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
                               <p className="text-xs uppercase tracking-[0.24em] text-gray-400">Newest</p>
-                              <p className="mt-2 text-lg font-semibold text-gray-900">{formatDateTime(entry.vehicles[0]?.createdAt)}</p>
+                              <p className="mt-2 text-lg font-semibold text-gray-900">{formatDateTime(entry.vehicles[0]?.updatedAt || entry.vehicles[0]?.createdAt)}</p>
                             </div>
                           </div>
                           <button
@@ -311,7 +340,7 @@ const CustomerVehicles = () => {
                                       <td className="px-4 py-4 text-gray-700">{vehicle.registrationNumber || "—"}</td>
                                       <td className="px-4 py-4 text-gray-700">{vehicle.brand || "—"}</td>
                                       <td className="px-4 py-4 text-gray-700">{vehicle.model || "—"}</td>
-                                      <td className="px-4 py-4 text-gray-700">{formatDateTime(vehicle.createdAt)}</td>
+                                      <td className="px-4 py-4 text-gray-700">{formatDateTime(vehicle.updatedAt || vehicle.createdAt)}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -342,7 +371,7 @@ const CustomerVehicles = () => {
                             </div>
                             <div className="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
                               <p className="text-xs uppercase tracking-[0.24em] text-gray-400">Newest</p>
-                              <p className="mt-1 text-lg font-semibold text-gray-900">{formatDateTime(entry.vehicles[0]?.createdAt)}</p>
+                              <p className="mt-1 text-lg font-semibold text-gray-900">{formatDateTime(entry.vehicles[0]?.updatedAt || entry.vehicles[0]?.createdAt)}</p>
                             </div>
                           </div>
                         )}
