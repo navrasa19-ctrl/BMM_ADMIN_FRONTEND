@@ -6,6 +6,7 @@ import {
   Users,
   MapPin,
   Car,
+  ExternalLink,
 } from "lucide-react";
 import TopBar from "../components/TopBar.jsx";
 import Sidebar from "../components/Sidebar.jsx";
@@ -79,9 +80,20 @@ const AdminCustomerProfile = () => {
     return `CUS${clean.toString().toUpperCase()}`;
   };
 
-  const formatLocation = (location) => {
-    if (!location) return "—";
-    if (typeof location === "string") return location;
+  const hasCoordinates = (details) =>
+    Number.isFinite(details?.latitude) && Number.isFinite(details?.longitude);
+
+  // Prefers the backend-resolved `locationDetails`, falls back to raw `location`
+  const formatLocation = (customer) => {
+    const details = customer?.locationDetails;
+    if (details?.address) return details.address;
+    if (hasCoordinates(details)) {
+      return `${details.latitude.toFixed(5)}, ${details.longitude.toFixed(5)}`;
+    }
+
+    const location = customer?.location;
+    if (!location) return "Not available";
+    if (typeof location === "string") return location.trim() || "Not available";
     if (typeof location !== "object") return String(location);
     return (
       location.address ||
@@ -89,8 +101,22 @@ const AdminCustomerProfile = () => {
       [location.city, location.state, location.pincode || location.postalCode]
         .filter(Boolean)
         .join(", ") ||
-      "—"
+      "Not available"
     );
+  };
+
+  const getMapsUrl = (customer) => {
+    const details = customer?.locationDetails;
+    const query = hasCoordinates(details)
+      ? `${details.latitude},${details.longitude}`
+      : details?.address;
+    if (!query) return null;
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+  };
+
+  const LOCATION_SOURCE_LABELS = {
+    profile: "Saved in customer profile",
+    booking: "From latest booking address",
   };
 
   const formatDateTime = (value) => {
@@ -113,7 +139,7 @@ const AdminCustomerProfile = () => {
 
     const matchesSearch =
       String(u.name || "").toLowerCase().includes(keyword) ||
-      formatLocation(u.location).toLowerCase().includes(keyword) ||
+      formatLocation(u).toLowerCase().includes(keyword) ||
       String(u.vehicle || "").toLowerCase().includes(keyword) ||
       String(u.vehicleNumber || "").toLowerCase().includes(keyword) ||
       String(u.phone || "").toLowerCase().includes(keyword) ||
@@ -136,7 +162,9 @@ const AdminCustomerProfile = () => {
     const rows = filteredCustomers.map((c) => ({
       CustomerId: generateCusId(c),
       Name: c.name || "",
-      Location: formatLocation(c.location),
+      Location: formatLocation(c),
+      Latitude: c.locationDetails?.latitude ?? "",
+      Longitude: c.locationDetails?.longitude ?? "",
       Phone: c.phone || "",
       Vehicle: c.vehicle || "",
       VehicleNumber: c.vehicleNumber || "",
@@ -292,8 +320,11 @@ const AdminCustomerProfile = () => {
                       {user.name}
                     </h3>
 
-                    <p className="text-center text-sm text-gray-500 overflow-hidden text-ellipsis whitespace-nowrap max-w-full">
-                      {formatLocation(user.location)}
+                    <p
+                      className="text-center text-sm text-gray-500 truncate max-w-full"
+                      title={formatLocation(user)}
+                    >
+                      {formatLocation(user)}
                     </p>
 
                     <p className="text-center text-sm text-gray-500">{user.phone}</p>
@@ -344,7 +375,9 @@ const AdminCustomerProfile = () => {
                         <tr key={user.userId || user.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 text-sm text-gray-700">{generateCusId(user)}</td>
                           <td className="px-4 py-3 text-sm text-gray-700">{user.name}</td>
-                          <td className="px-4 py-3 text-sm text-gray-700">{formatLocation(user.location)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700 max-w-xs truncate" title={formatLocation(user)}>
+                            {formatLocation(user)}
+                          </td>
                           <td className="px-4 py-3 text-sm text-gray-700">{user.phone}</td>
                           <td className="px-4 py-3 text-sm text-gray-700">{user.vehicle || "—"}</td>
                           <td className="px-4 py-3 text-sm text-gray-700">{user.vehicleNumber || "—"}</td>
@@ -394,7 +427,16 @@ const AdminCustomerProfile = () => {
 
                 <div className="p-6 space-y-5">
                   <Info label="Customer Name" value={selectedCustomer.name || "—"} />
-                  <Info label="Location" icon={MapPin} value={formatLocation(selectedCustomer.location)} />
+                  <LocationInfo
+                    value={formatLocation(selectedCustomer)}
+                    source={LOCATION_SOURCE_LABELS[selectedCustomer.locationDetails?.source]}
+                    updatedAt={
+                      selectedCustomer.locationDetails?.updatedAt
+                        ? formatDateTime(selectedCustomer.locationDetails.updatedAt)
+                        : null
+                    }
+                    mapsUrl={getMapsUrl(selectedCustomer)}
+                  />
                   <Info label="Phone Number" icon={Phone} value={selectedCustomer.phone || "—"} />
                   <Info label="Vehicle" icon={Car} value={selectedCustomer.vehicle || "—"} />
                   <Info label="Vehicle Number" value={selectedCustomer.vehicleNumber || "—"} />
@@ -426,6 +468,34 @@ const Info = ({ label, value, icon: Icon }) => (
     <div className="flex items-center gap-2 border rounded-xl px-4 py-3">
       {Icon && <Icon size={16} className="text-gray-400" />}
       <span className="text-sm">{value}</span>
+    </div>
+  </div>
+);
+
+const LocationInfo = ({ value, source, updatedAt, mapsUrl }) => (
+  <div>
+    <label className="text-xs text-gray-500">Location</label>
+    <div className="flex items-start gap-2 border rounded-xl px-4 py-3">
+      <MapPin size={16} className="text-gray-400 mt-0.5 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm break-words">{value}</p>
+        {source && (
+          <p className="text-xs text-gray-400 mt-1">
+            {source}
+            {updatedAt ? ` · ${updatedAt}` : ""}
+          </p>
+        )}
+      </div>
+      {mapsUrl && (
+        <a
+          href={mapsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 text-xs font-medium text-red-600 hover:text-red-700 shrink-0"
+        >
+          Map <ExternalLink size={12} />
+        </a>
+      )}
     </div>
   </div>
 );
