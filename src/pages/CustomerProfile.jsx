@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   X,
   Phone,
@@ -7,11 +7,42 @@ import {
   MapPin,
   Car,
   ExternalLink,
+  Navigation,
 } from "lucide-react";
 import TopBar from "../components/TopBar.jsx";
 import Sidebar from "../components/Sidebar.jsx";
+import LiveLocationMap from "../components/LiveLocationMap.jsx";
+import { useCustomerLiveLocations } from "../hooks/useCustomerLiveLocations.js";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
+// A shared point older than this is shown as "last seen", not live
+const LIVE_STALE_AFTER_MS = 2 * 60 * 1000;
+
+const getLiveState = (liveLocation, now) => {
+  if (
+    !Number.isFinite(liveLocation?.latitude) ||
+    !Number.isFinite(liveLocation?.longitude)
+  ) {
+    return "none";
+  }
+  const updatedAtMs = new Date(liveLocation.updatedAt).getTime();
+  const isFresh = Number.isFinite(updatedAtMs) && now - updatedAtMs <= LIVE_STALE_AFTER_MS;
+  return liveLocation.isSharing && isFresh ? "live" : "last_seen";
+};
+
+const formatRelativeTime = (value, now) => {
+  const ms = new Date(value).getTime();
+  if (!Number.isFinite(ms)) return "";
+  const seconds = Math.max(0, Math.round((now - ms) / 1000));
+  if (seconds < 10) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  return `${Math.round(hours / 24)} days ago`;
+};
 
 /* ================= SKELETON CARD ================= */
 
@@ -28,7 +59,7 @@ const CustomerSkeleton = () => (
 
 const AdminCustomerProfile = () => {
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 1024);
-  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [customers, setCustomers] = useState([]);
@@ -36,13 +67,22 @@ const AdminCustomerProfile = () => {
   const [search, setSearch] = useState("");
   const [genderFilter, setGenderFilter] = useState("all");
   const [viewMode, setViewMode] = useState("grid");
+  // Re-renders "Live" / "x min ago" labels as time passes
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15 * 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   /* FETCH CUSTOMERS FROM API */
-  useEffect(() => {
-    const fetchCustomers = async () => {
+  // `silent` refetches (after a socket reconnect) keep the current UI
+  const fetchCustomers = useCallback(async ({ silent = false } = {}) => {
       try {
-        setLoading(true);
-        setError(null);
+        if (!silent) {
+          setLoading(true);
+          setError(null);
+        }
         
         const response = await fetch(
           `${API_BASE_URL}/api/customer-profile/all-profiles`
@@ -61,14 +101,37 @@ const AdminCustomerProfile = () => {
         }
       } catch (err) {
         console.error("Error fetching customers:", err);
-        setError(err.message || "Failed to fetch customers");
+        if (!silent) setError(err.message || "Failed to fetch customers");
       } finally {
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
-    };
-
-    fetchCustomers();
   }, []);
+
+  useEffect(() => {
+    fetchCustomers();
+  }, [fetchCustomers]);
+
+  /* REALTIME CUSTOMER LOCATION */
+  const handleLiveLocation = useCallback(({ userId, liveLocation }) => {
+    setCustomers((prev) =>
+      prev.map((customer) => {
+        if (customer.userId !== userId) return customer;
+        // Ignore an older point arriving after a newer one
+        const currentMs = new Date(customer.liveLocation?.updatedAt || 0).getTime();
+        const incomingMs = new Date(liveLocation?.updatedAt || 0).getTime();
+        if (liveLocation?.isSharing && incomingMs < currentMs) return customer;
+        return { ...customer, liveLocation };
+      })
+    );
+  }, []);
+
+  const liveConnection = useCustomerLiveLocations(handleLiveLocation, () =>
+    fetchCustomers({ silent: true })
+  );
+
+  // Derived from the list so live updates reach the open profile modal
+  const selectedCustomer =
+    customers.find((customer) => customer.userId === selectedCustomerId) || null;
 
   // Use backend customerId if present, otherwise generate fallback prefixed with CUS
   const generateCusId = (u) => {
@@ -327,6 +390,12 @@ const AdminCustomerProfile = () => {
                       {formatLocation(user)}
                     </p>
 
+                    {getLiveState(user.liveLocation, now) === "live" && (
+                      <div className="flex justify-center mt-1">
+                        <LiveBadge />
+                      </div>
+                    )}
+
                     <p className="text-center text-sm text-gray-500">{user.phone}</p>
 
                     <p className="text-center text-sm text-gray-500 truncate">
@@ -340,7 +409,7 @@ const AdminCustomerProfile = () => {
                     <p className="text-center text-xs text-gray-400 mt-2">Customer ID: {generateCusId(user)}</p>
 
                     <button
-                      onClick={() => setSelectedCustomer(user)}
+                      onClick={() => setSelectedCustomerId(user.userId)}
                       className="mt-4 w-full bg-red-600 hover:bg-red-700 text-white py-2 rounded-lg font-medium"
                     >
                       View Profile
@@ -375,8 +444,11 @@ const AdminCustomerProfile = () => {
                         <tr key={user.userId || user.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 text-sm text-gray-700">{generateCusId(user)}</td>
                           <td className="px-4 py-3 text-sm text-gray-700">{user.name}</td>
-                          <td className="px-4 py-3 text-sm text-gray-700 max-w-xs truncate" title={formatLocation(user)}>
-                            {formatLocation(user)}
+                          <td className="px-4 py-3 text-sm text-gray-700 max-w-xs">
+                            <div className="truncate" title={formatLocation(user)}>
+                              {formatLocation(user)}
+                            </div>
+                            {getLiveState(user.liveLocation, now) === "live" && <LiveBadge />}
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-700">{user.phone}</td>
                           <td className="px-4 py-3 text-sm text-gray-700">{user.vehicle || "—"}</td>
@@ -384,7 +456,7 @@ const AdminCustomerProfile = () => {
                           <td className="px-4 py-3 text-sm text-gray-700">{user.gender}</td>
                           <td className="px-4 py-3 text-sm text-gray-700">
                             <button
-                              onClick={() => setSelectedCustomer(user)}
+                              onClick={() => setSelectedCustomerId(user.userId)}
                               className="px-3 py-1 rounded-lg bg-red-600 text-white text-sm"
                             >
                               View
@@ -405,7 +477,7 @@ const AdminCustomerProfile = () => {
               <div className="bg-white max-w-md w-full rounded-2xl shadow-xl relative max-h-[90vh] overflow-y-auto">
                 <button
                   className="absolute top-4 right-4 text-gray-500 hover:text-red-600"
-                  onClick={() => setSelectedCustomer(null)}
+                  onClick={() => setSelectedCustomerId(null)}
                 >
                   <X />
                 </button>
@@ -427,6 +499,12 @@ const AdminCustomerProfile = () => {
 
                 <div className="p-6 space-y-5">
                   <Info label="Customer Name" value={selectedCustomer.name || "—"} />
+                  <LiveLocationInfo
+                    liveLocation={selectedCustomer.liveLocation}
+                    liveState={getLiveState(selectedCustomer.liveLocation, now)}
+                    lastUpdated={formatRelativeTime(selectedCustomer.liveLocation?.updatedAt, now)}
+                    connection={liveConnection}
+                  />
                   <LocationInfo
                     value={formatLocation(selectedCustomer)}
                     source={LOCATION_SOURCE_LABELS[selectedCustomer.locationDetails?.source]}
@@ -445,7 +523,7 @@ const AdminCustomerProfile = () => {
 
                 <div className="p-4 border-t">
                   <button
-                    onClick={() => setSelectedCustomer(null)}
+                    onClick={() => setSelectedCustomerId(null)}
                     className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-semibold"
                   >
                     Close
@@ -472,9 +550,89 @@ const Info = ({ label, value, icon: Icon }) => (
   </div>
 );
 
+const LiveBadge = () => (
+  <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">
+    <span className="relative flex h-2 w-2">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-75" />
+      <span className="relative inline-flex h-2 w-2 rounded-full bg-green-600" />
+    </span>
+    Live
+  </span>
+);
+
+const CONNECTION_LABELS = {
+  connected: null,
+  connecting: "Connecting to live updates...",
+  disconnected: "Live updates paused, reconnecting...",
+};
+
+const LiveLocationInfo = ({ liveLocation, liveState, lastUpdated, connection }) => {
+  const hasPoint = liveState !== "none";
+  const mapsUrl = hasPoint
+    ? `https://www.google.com/maps/search/?api=1&query=${liveLocation.latitude},${liveLocation.longitude}`
+    : null;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-xs text-gray-500">Live Location</label>
+        {liveState === "live" ? (
+          <LiveBadge />
+        ) : hasPoint ? (
+          <span className="text-xs text-gray-500">
+            {liveLocation.isSharing ? "Not updating" : "Sharing stopped"}
+          </span>
+        ) : null}
+      </div>
+
+      {hasPoint ? (
+        <div className="space-y-2">
+          <LiveLocationMap
+            latitude={liveLocation.latitude}
+            longitude={liveLocation.longitude}
+            accuracy={liveLocation.accuracy}
+            isLive={liveState === "live"}
+          />
+          <div className="flex items-start gap-2 border rounded-xl px-4 py-3">
+            <Navigation size={16} className="text-gray-400 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm break-words">
+                {liveLocation.address ||
+                  `${liveLocation.latitude.toFixed(5)}, ${liveLocation.longitude.toFixed(5)}`}
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                {liveState === "live" ? "Updated" : "Last seen"} {lastUpdated}
+                {Number.isFinite(liveLocation.accuracy)
+                  ? ` · ±${Math.round(liveLocation.accuracy)} m`
+                  : ""}
+              </p>
+            </div>
+            <a
+              href={mapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-xs font-medium text-red-600 hover:text-red-700 shrink-0"
+            >
+              Map <ExternalLink size={12} />
+            </a>
+          </div>
+        </div>
+      ) : (
+        <div className="border rounded-xl px-4 py-3 text-sm text-gray-500">
+          Customer is not sharing live location
+        </div>
+      )}
+
+      {CONNECTION_LABELS[connection] && (
+        <p className="text-xs text-amber-600 mt-1">{CONNECTION_LABELS[connection]}</p>
+      )}
+    </div>
+  );
+};
+
 const LocationInfo = ({ value, source, updatedAt, mapsUrl }) => (
   <div>
-    <label className="text-xs text-gray-500">Location</label>
+    <label className="text-xs text-gray-500">Saved Address</label>
     <div className="flex items-start gap-2 border rounded-xl px-4 py-3">
       <MapPin size={16} className="text-gray-400 mt-0.5 shrink-0" />
       <div className="flex-1 min-w-0">
