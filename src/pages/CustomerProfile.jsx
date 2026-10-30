@@ -146,26 +146,41 @@ const AdminCustomerProfile = () => {
   const hasCoordinates = (details) =>
     Number.isFinite(details?.latitude) && Number.isFinite(details?.longitude);
 
-  // Prefers the backend-resolved `locationDetails`, falls back to raw `location`
+  const compactAddress = (value) => {
+    const parts = String(value || "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (parts.length >= 4) return `${parts[parts.length - 3]}, ${parts[parts.length - 1]}`;
+    if (parts.length === 3) return `${parts[0]}, ${parts[2]}`;
+    return parts.join(", ");
+  };
+
+  // Show a stable, city-level location rather than a street address or live GPS point.
   const formatLocation = (customer) => {
     const details = customer?.locationDetails;
-    if (details?.address) return details.address;
-    if (hasCoordinates(details)) {
-      return `${details.latitude.toFixed(5)}, ${details.longitude.toFixed(5)}`;
+    const city = details?.city || customer?.city || details?.locality || customer?.locality;
+    const country = details?.country || customer?.country;
+    const address =
+      details?.address ||
+      (typeof customer?.location === "string" ? customer.location : "") ||
+      customer?.location?.address ||
+      customer?.location?.formattedAddress;
+
+    if (city && country) return `${city}, ${country}`;
+    if (city) {
+      const compact = compactAddress(address);
+      if (compact.toLowerCase().startsWith(`${city.toLowerCase()},`)) return compact;
+      return city;
     }
 
-    const location = customer?.location;
-    if (!location) return "Not available";
-    if (typeof location === "string") return location.trim() || "Not available";
-    if (typeof location !== "object") return String(location);
-    return (
-      location.address ||
-      location.formattedAddress ||
-      [location.city, location.state, location.pincode || location.postalCode]
-        .filter(Boolean)
-        .join(", ") ||
-      "Not available"
-    );
+    const state = details?.state || customer?.state;
+    if (state && country) return `${state}, ${country}`;
+    if (state || country) return state || country;
+
+    if (address) return compactAddress(address) || "Not available";
+
+    return hasCoordinates(details) ? "Location captured" : "Not available";
   };
 
   const getMapsUrl = (customer) => {
@@ -178,8 +193,9 @@ const AdminCustomerProfile = () => {
   };
 
   const LOCATION_SOURCE_LABELS = {
+    registration: "Initial location saved",
     profile: "Saved in customer profile",
-    booking: "From latest booking address",
+    booking: "From first booking address",
   };
 
   const formatDateTime = (value) => {
