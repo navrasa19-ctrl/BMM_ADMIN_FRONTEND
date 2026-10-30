@@ -195,6 +195,7 @@ const AdminCustomerProfile = () => {
   const LOCATION_SOURCE_LABELS = {
     registration: "Initial location saved",
     profile: "Saved in customer profile",
+    live_location: "Last saved customer location",
     booking: "From first booking address",
   };
 
